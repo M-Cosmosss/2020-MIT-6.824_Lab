@@ -23,6 +23,7 @@ type KeyValue struct {
 }
 
 type ByKey []KeyValue
+
 func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
@@ -44,29 +45,29 @@ func Worker(mapf func(filename string, contents string) []KeyValue,
 	reducef func(string, []string) string) {
 	log.Println("[Worker]: Start!")
 
-	NoTaskTimes:=0
+	NoTaskTimes := 0
 
-	for{
-		task:=CallGetTask()
+	for {
+		task := CallGetTask()
 		switch task.TaskType {
 		case MapTask:
-			DoMap(mapf,task)
-			log.Printf("[Worker]: Task %d finished",task.TaskIndex)
+			DoMap(mapf, task)
+			log.Printf("[Worker]: Task %d finished", task.TaskIndex)
 		case ReduceTask:
-			DoReduce(reducef,task)
-			log.Printf("[Worker]: Task %d finished",task.TaskIndex)
+			DoReduce(reducef, task)
+			log.Printf("[Worker]: Task %d finished", task.TaskIndex)
 		case NoTask:
 			log.Println("[Worker]: No Task")
-			if NoTaskTimes++;NoTaskTimes==10{
+			if NoTaskTimes++; NoTaskTimes == 10 {
 				log.Fatal("Retry 10 times... Exit!")
 			}
-			time.Sleep(time.Second*1)
+			time.Sleep(time.Second)
 			continue
 		default:
 			log.Fatal("Unknown Task type")
 		}
-		task.TaskStatus=Finished
-		if task.TaskType!=NoTask{
+		task.TaskStatus = Finished
+		if task.TaskType != NoTask {
 			CallDone(task)
 			time.Sleep(time.Second)
 		}
@@ -74,14 +75,15 @@ func Worker(mapf func(filename string, contents string) []KeyValue,
 	}
 }
 
-func DoMap(mapf func(filename string, contents string) []KeyValue,task *Task)  {
+func DoMap(mapf func(filename string, contents string) []KeyValue, task *Task) {
 	contents := OpenReadAll(task.FileName)
-	kva:=mapf(task.FileName,string(contents))
+	kva := mapf(task.FileName, string(contents))
 
 	fd := make([]*os.File, task.ReduceN)
-	for i, _ := range fd {
-		filename := "mr-out-" + strconv.Itoa(task.TaskMapIndex) + "-" + strconv.Itoa(i)
+	for i := range fd {
+		filename := fmt.Sprintf("mr-out-%d-%d", task.TaskMapIndex, i)
 		var err error
+
 		//delete the tmp file which maybe exist
 		os.Remove(filename)
 
@@ -96,27 +98,24 @@ func DoMap(mapf func(filename string, contents string) []KeyValue,task *Task)  {
 		Chk(err)
 		fd[ReduceI].Write(js)
 	}
-
 }
 
-func DoReduce(reducef func(key string, values []string) string,task *Task) {
-	kva:=[]KeyValue{}
-	all:=make([]byte,0)
-	for i:=0;i<task.FileNums;i++{
-		filename:="mr-out-"+strconv.Itoa(i)+"-"+strconv.Itoa(task.TaskReduceIndex)
-		all=append(all,OpenReadAll(filename)...)
+func DoReduce(reducef func(key string, values []string) string, task *Task) {
+	kva := []KeyValue{}
+	all := make([]byte, 0)
+	for i := 0; i < task.FileNums; i++ {
+		filename := fmt.Sprintf("mr-out-%d-%d", i, task.TaskReduceIndex)
+		all = append(all, OpenReadAll(filename)...)
 	}
-	//log.Println(string(all[0:30]))
-	decoder:=json.NewDecoder(bytes.NewReader(all))
-	kv:=&KeyValue{}
-	for decoder.Decode(kv)==nil {
-		kva=append(kva,*kv)
+	decoder := json.NewDecoder(bytes.NewReader(all))
+	kv := &KeyValue{}
+	for decoder.Decode(kv) == nil {
+		kva = append(kva, *kv)
 	}
 
 	sort.Sort(ByKey(kva))
-
-
-	oname := "mr-out-"+strconv.Itoa(task.TaskReduceIndex)
+	oname := "mr-out-" + strconv.Itoa(task.TaskReduceIndex)
+	//delete the tmp file which maybe exist
 	os.Remove(oname)
 	ofile, _ := os.Create(oname)
 	defer ofile.Close()
@@ -151,15 +150,15 @@ func OpenReadAll(file string) []byte {
 	return contents
 }
 
-func CallGetTask() *Task{
+func CallGetTask() *Task {
 	reply := Task{}
 	call("Master.GetTask", &Task{}, &reply)
 
 	switch reply.TaskType {
 	case MapTask:
-		log.Printf("[Worker]: type:Map  file: %s",reply.FileName)
+		log.Printf("[Worker]: type:Map  file: %s", reply.FileName)
 	case ReduceTask:
-		log.Printf("[Worker]: type:Reduce Index:%d ReduceIndex:%d",reply.TaskIndex,reply.TaskReduceIndex)
+		log.Printf("[Worker]: type:Reduce Index:%d ReduceIndex:%d", reply.TaskIndex, reply.TaskReduceIndex)
 	case NoTask:
 		log.Println("[Worker]: type:NoTask")
 	default:
@@ -169,9 +168,9 @@ func CallGetTask() *Task{
 }
 
 func CallDone(task *Task) {
-	reply:=0
-	call("Master.TaskDone",task,&reply)
-	switch reply{
+	reply := 0
+	call("Master.TaskDone", task, &reply)
+	switch reply {
 	case Success:
 		log.Println("[Worker]: Call Done Success")
 	case Error:
@@ -188,8 +187,6 @@ func CallDone(task *Task) {
 // returns false if something goes wrong.
 //
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	//sockname := masterSock()
 	sockname := masterSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {

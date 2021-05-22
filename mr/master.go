@@ -2,17 +2,16 @@ package mr
 
 import (
 	"log"
+	"net"
+	"net/http"
+	"net/rpc"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
 )
-import "net"
-import "net/rpc"
-import "net/http"
 
 type Master struct {
-	// Your definitions here.
 	Files          []string
 	Tasks          map[int]*Task
 	MapDone        bool
@@ -20,41 +19,32 @@ type Master struct {
 	TaskMapDone    int
 	TaskReduceDone int
 	sync.RWMutex
-	//Tasks      []*Task
 }
-
-
 
 func (m *Master) GetTask(args *Task, reply *Task) error {
 	reply.TaskType = NoTask
 	m.Lock()
 	defer m.Unlock()
-	if m.MapDone == false {
-		for _, j := range m.Tasks {
-			if j.TaskStatus == Ready && j.TaskType == MapTask {
-				j.TaskStatus = Doing
-				*reply = *j
-				go m.TaskWatch(j.TaskIndex)
-				log.Printf("GetTask: Map Task %d", j.TaskIndex)
-				return nil
-			}
-		}
-	} else {
-		for _, j := range m.Tasks {
-			if j.TaskStatus == Ready && j.TaskType == ReduceTask {
-				j.TaskStatus = Doing
-				*reply = *j
-				go m.TaskWatch(j.TaskIndex)
-				log.Printf("GetTask: Reduce Task %d", j.TaskIndex)
-				return nil
-			}
+	TaskStr := "Map Task"
+	Target := MapTask
+	if m.MapDone {
+		TaskStr = "Reduce Task"
+		Target = ReduceTask
+	}
+	for _, j := range m.Tasks {
+		if j.TaskStatus == Ready && j.TaskType == Target {
+			j.TaskStatus = Doing
+			*reply = *j
+			go m.TaskWatch(j.TaskIndex)
+			log.Printf("GetTask: %s %d", TaskStr, j.TaskIndex)
+			return nil
 		}
 	}
+
 	return nil
 }
 
-
-//Watch task timeout
+//TaskWatch watches task timeout.
 func (m *Master) TaskWatch(i int) {
 	time.Sleep(Timeout)
 	m.RLock()
@@ -85,7 +75,7 @@ func (m *Master) server() {
 	go http.Serve(l, nil)
 }
 
-//Worker report the finished task
+//TaskDone report the finished task
 func (m *Master) TaskDone(args *Task, reply *int) error {
 	m.Lock()
 	defer m.Unlock()
@@ -101,16 +91,16 @@ func (m *Master) TaskDone(args *Task, reply *int) error {
 	case MapTask:
 		m.Tasks[args.TaskIndex].TaskStatus = Finished
 		m.TaskMapDone++
-		if m.TaskMapDone==len(m.Files) {
+		if m.TaskMapDone == len(m.Files) {
 			log.Println("[*]:Map Tasks all done!")
-			m.MapDone=true
+			m.MapDone = true
 		}
 	case ReduceTask:
 		m.Tasks[args.TaskIndex].TaskStatus = Finished
 		m.TaskReduceDone++
-		if m.TaskReduceDone==args.ReduceN {
+		if m.TaskReduceDone == args.ReduceN {
 			log.Println("[*]:Reduce Tasks all done!")
-			m.ReduceDone=true
+			m.ReduceDone = true
 		}
 	default:
 		log.Fatal("Call Done:Unknown Task type")
@@ -121,11 +111,10 @@ func (m *Master) TaskDone(args *Task, reply *int) error {
 	return nil
 }
 
-//if all task finished,call this func
 func (m *Master) Done() bool {
 	m.RLock()
 	defer m.RUnlock()
-	if m.ReduceDone==true {
+	if m.ReduceDone {
 		cmd := exec.Command("sh", "-c", `rm ./mr-out-*-*`)
 		cmd.Run()
 		return true
@@ -139,10 +128,7 @@ func (m *Master) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeMaster(files []string, nReduce int) *Master {
-	m := Master{MapDone: false, ReduceDone: false}
-	//m.Tasks = make([]*Task, len(files)+nReduce)
-	m.Files = files
-	m.Tasks = make(map[int]*Task)
+	m := Master{Files: files, Tasks: make(map[int]*Task), MapDone: false, ReduceDone: false}
 	for i, j := range files {
 		m.Tasks[i] = &Task{FileName: j, TaskType: MapTask,
 			TaskStatus: Ready, TaskIndex: i,
@@ -155,11 +141,6 @@ func MakeMaster(files []string, nReduce int) *Master {
 			ReduceN: nReduce, TaskStatus: Ready, TaskType: ReduceTask, FileNums: len(files)}
 		log.Printf("[Master]: Add Task type:Reduce Index:%d ReduceIndex:%d", i+len(files), i)
 	}
-	//log.Println(m.Tasks)
 	m.server()
 	return &m
-}
-
-func MasterInit(m *Master, files []string) {
-
 }
